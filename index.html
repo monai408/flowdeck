@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#08090a">
+<meta name="description" content="Now / Next / Someday / Checking の4フェーズで回す、ワンクリック完了のタスクボード。">
+<title>FLOWDECK</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+<link rel="apple-touch-icon" href="assets/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<!-- ══ アプリシェル ══════════════════════════════════════════ -->
+<div class="app">
+
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand" title="FLOWDECK">
+        <span class="brand-mark" aria-hidden="true">
+          <i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i>
+        </span>
+        <span class="brand-name">FLOWDECK</span>
+      </div>
+      <div class="today" id="today"></div>
+    </div>
+
+    <div class="topbar-center">
+      <label class="search" for="q">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        <input id="q" type="text" placeholder="タスクを検索" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <kbd class="search-kbd">/</kbd>
+        <button class="search-clear" id="qClear" type="button" aria-label="検索をクリア" hidden>
+          <svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </label>
+    </div>
+
+    <div class="topbar-right">
+      <button class="icon-btn btn-search" id="btnSearch" type="button" aria-label="検索" title="検索">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      </button>
+      <button class="chip" id="btnFilter" type="button" aria-haspopup="true">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        <span class="chip-txt">ジャンル</span>
+        <span class="chip-count" id="filterCount" hidden>0</span>
+      </button>
+      <button class="chip" id="btnArchive" type="button">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h17M5.5 7.5v11a1.5 1.5 0 001.5 1.5h10a1.5 1.5 0 001.5-1.5v-11M8 7.5V5.5A1.5 1.5 0 019.5 4h5A1.5 1.5 0 0116 5.5v2M10 12.5h4"/></svg>
+        <span class="chip-txt">アーカイブ</span>
+      </button>
+      <button class="chip" id="btnTpl" type="button" title="テンプレート (T)">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6l8.4 4.3-8.4 4.3L3.6 7.9z"/><path d="M3.6 12.3l8.4 4.3 8.4-4.3"/><path d="M3.6 16.3l8.4 4.1 8.4-4.1"/></svg>
+        <span class="chip-txt">テンプレ</span>
+      </button>
+      <button class="chip sync-chip" id="btnSync" type="button" data-state="off" title="同期の状態">
+        <span class="sync-dot" aria-hidden="true"></span>
+        <span class="chip-txt" id="syncTxt">ローカル</span>
+      </button>
+      <button class="icon-btn" id="btnSettings" type="button" aria-label="設定" title="設定">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M3.5 12h2.2M18.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></svg>
+      </button>
+      <button class="icon-btn" id="btnHelp" type="button" aria-label="ショートカット" title="ショートカット (?)">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M9.2 9a2.8 2.8 0 115.3 1.3c-.4.8-1.2 1.2-1.9 1.7-.5.4-.7.8-.7 1.5"/><circle cx="12" cy="17.4" r=".9" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8.5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="phase-tabs" id="phaseTabs" aria-label="フェーズ切替"></nav>
+
+  <main class="board" id="board"></main>
+
+  <footer class="statusbar">
+    <div class="stat-group" id="statPhases"></div>
+    <div class="stat-spacer"></div>
+    <div class="stat-group" id="statDone"></div>
+  </footer>
+
+</div>
+
+<!-- ══ 詳細ドロワー ══════════════════════════════════════════ -->
+<aside class="drawer" id="drawer" aria-hidden="true" hidden></aside>
+
+<!-- ══ オーバーレイ ══════════════════════════════════════════ -->
+<div class="scrim" id="scrim" hidden></div>
+<div class="pop" id="pop" hidden></div>
+<div class="modal-host" id="modalHost" hidden></div>
+<div class="sheet-host" id="archiveHost" hidden></div>
+<div class="bulkbar" id="bulkbar" hidden></div>
+
+<!-- ══ コマンドパレット (Ctrl+K) ══════════════════════════════ -->
+<div class="palette-host" id="palette" hidden>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="コマンドパレット">
+    <label class="pal-input-row" for="palInput">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      <input id="palInput" type="text" autocomplete="off" spellcheck="false"
+             placeholder="タスクを検索、またはコマンドを実行">
+      <kbd class="search-kbd">Esc</kbd>
+    </label>
+    <div class="pal-list" id="palList"></div>
+    <div class="pal-foot">
+      <span><kbd class="kb">↑↓</kbd>移動</span>
+      <span><kbd class="kb">Enter</kbd>開く</span>
+      <span><kbd class="kb">Ctrl+Enter</kbd>完了にする</span>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
