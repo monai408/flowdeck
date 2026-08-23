@@ -354,7 +354,7 @@ function addTask(phase, raw, opts) {
   const t = {
     id: uid(), title: p.title, phase,
     labelId: p.labelId || (opts && opts.labelId) || null,
-    due: p.due || null, note: '',
+    due: p.due || (opts && opts.due) || null, note: '',
     p1: p.p1 || false,
     order: (list.length ? list[0].order : 0) - 1,
     createdAt: Date.now(), updatedAt: Date.now(),
@@ -971,6 +971,10 @@ let builtOrder = '';
 
 function phaseOrder() { return state.settings.phaseOrder.filter(p => PHASE[p]); }
 
+/* クイック追加の「下書き」。列ごとにジャンルと期限を持たせておき、
+   追加したタスクに引き継ぐ。連続で足すとき毎回選ばなくていいように残す。 */
+const qaDraft = {};
+
 function buildBoard() {
   clear(board); cols = {};
   phaseOrder().forEach(pid => {
@@ -980,6 +984,7 @@ function buildBoard() {
     const body  = h('div',  { class:'col-body', dataset:{ body:pid } });
     const input = h('input', { type:'text', placeholder:p.ph, autocomplete:'off',
                                spellcheck:'false', enterkeyhint:'done', dataset:{ qa:pid } });
+    const chips = h('div', { class:'qa-chips', dataset:{ chips:pid }, hidden:true });
     const el = h('section', { class:'column', dataset:{ phase:pid }, style:{ '--pc':`var(--${pid})` } },
       h('div', { class:'col-head' },
         h('div', { class:'col-title' },
@@ -988,15 +993,91 @@ function buildBoard() {
           h('span', { class:'col-jp' }, p.jp),
           over, count
         ),
-        h('label', { class:'qa' }, svg('plus', 'ico qa-plus'), input,
-          h('span', { class:'qa-hint' }, '#ジャンル !期限'))
+        h('div', { class:'qa' },
+          h('button', { class:'qa-plus-btn', type:'button', tabindex:'-1',
+                        'aria-label':'入力欄へ', onClick:() => input.focus() }, svg('plus','ico qa-plus')),
+          input,
+          h('button', { class:'qa-btn', type:'button', dataset:{ qaLabel:pid },
+                        title:'ジャンルを選ぶ', 'aria-label':'ジャンルを選ぶ' }, svg('tag')),
+          h('button', { class:'qa-btn', type:'button', dataset:{ qaDue:pid },
+                        title:'期限を選ぶ', 'aria-label':'期限を選ぶ' }, svg('hourglass'))),
+        chips
       ),
       body
     );
-    cols[pid] = { el, body, count, over, input };
+    cols[pid] = { el, body, count, over, input, chips };
     board.append(el);
   });
   builtOrder = phaseOrder().join(',');
+  phaseOrder().forEach(renderQaChips);
+}
+
+/** 下書きのジャンル・期限をチップとして出す */
+function renderQaChips(pid) {
+  const c = cols[pid]; if (!c) return;
+  const d = qaDraft[pid] || {};
+  const lab = d.labelId && state.labels[d.labelId] && !state.labels[d.labelId].deleted
+            ? state.labels[d.labelId] : null;
+  if (!lab && !d.due) { delete qaDraft[pid]; }
+  clear(c.chips);
+  if (!lab && !d.due) { c.chips.hidden = true; }
+  else {
+    c.chips.hidden = false;
+    if (lab) c.chips.append(h('button', {
+      class:'qa-chip', type:'button', style:{ '--lc':lab.color }, title:'このジャンルを外す',
+      onClick:() => { if (qaDraft[pid]) delete qaDraft[pid].labelId; renderQaChips(pid); } },
+      h('span', { class:'tag-dot' }), lab.name, svg('x','ico ico-sm')));
+    if (d.due) {
+      const di = dueInfo(d.due);
+      c.chips.append(h('button', {
+        class:'qa-chip qa-chip-due', type:'button', title:'この期限を外す',
+        onClick:() => { if (qaDraft[pid]) delete qaDraft[pid].due; renderQaChips(pid); } },
+        svg('hourglass','ico ico-sm'), fmtDate(d.due),
+        di ? h('span', { class:'qa-chip-rel' }, di.txt) : null, svg('x','ico ico-sm')));
+    }
+  }
+  /* ボタンの点灯 */
+  const lb = c.el.querySelector('[data-qa-label]'), db = c.el.querySelector('[data-qa-due]');
+  if (lb) lb.classList.toggle('is-on', !!lab);
+  if (db) db.classList.toggle('is-on', !!d.due);
+}
+
+function openQaLabelPop(anchor, pid) {
+  openPop(anchor, p => {
+    app(p, h('div', { class:'pop-title' }, 'これから追加するタスクのジャンル'));
+    labelsSorted().forEach(l => app(p, popItem(null, l.name, () => {
+      qaDraft[pid] = Object.assign({}, qaDraft[pid], { labelId:l.id });
+      renderQaChips(pid); cols[pid].input.focus();
+    }, { swatch:l.color, on:(qaDraft[pid] || {}).labelId === l.id, check:true })));
+    app(p, h('div', { class:'pop-sep' }));
+    app(p, popItem('x', '指定しない', () => {
+      if (qaDraft[pid]) delete qaDraft[pid].labelId;
+      renderQaChips(pid); cols[pid].input.focus();
+    }, { on:!(qaDraft[pid] || {}).labelId }));
+    app(p, popItem('gear', 'ジャンルを管理', openLabelManager));
+  }, { align:'right' });
+}
+
+function openQaDuePop(anchor, pid) {
+  openPop(anchor, p => {
+    app(p, h('div', { class:'pop-title' }, 'これから追加するタスクの期限'));
+    [['今日',0], ['明日',1], ['明後日',2], ['今週末',null], ['1週間後',7], ['月末',null], ['来月',30]]
+      .forEach(([lbl, n]) => app(p, popItem('cal', lbl, () => {
+        const v = n != null ? addDays(today(), n) : parseDateToken(lbl);
+        qaDraft[pid] = Object.assign({}, qaDraft[pid], { due:v });
+        renderQaChips(pid); cols[pid].input.focus();
+      })));
+    app(p, h('div', { class:'pop-sep' }));
+    const di = h('input', { class:'inp', type:'date', value:(qaDraft[pid] || {}).due || '' });
+    di.addEventListener('change', () => {
+      qaDraft[pid] = Object.assign({}, qaDraft[pid], { due:di.value || null });
+      renderQaChips(pid); closePop();
+    });
+    app(p, h('div', { style:{ padding:'2px 4px 4px' } }, di));
+    if ((qaDraft[pid] || {}).due) app(p, popItem('x', '期限を指定しない', () => {
+      delete qaDraft[pid].due; renderQaChips(pid); cols[pid].input.focus();
+    }));
+  }, { align:'right' });
 }
 
 let seenCardIds = new Set();   /* 前回の描画に居たカード。新入りだけアニメーションさせる */
@@ -2186,7 +2267,15 @@ function openHelp() {
       ])));
 
     app(b, h('div', { style:{ 'margin-top':'18px' } },
-      h('div', { class:'kb-sec-t' }, 'クイック追加の記法'),
+      h('div', { class:'kb-sec-t' }, 'クイック追加（ジャンル・期限をボタンで選ぶ）'),
+      h('div', { class:'callout' }, svg('tag'), h('div', {},
+        h('div', {}, '入力欄の右にある ', h('b', {}, 'タグ'), ' と ', h('b', {}, '砂時計'),
+                     ' のボタンから、これから追加するタスクのジャンルと期限を選べます。'),
+        h('div', {}, '選んだ内容は入力欄の下にチップで出て、', h('b', {}, '続けて追加するときもそのまま効きます'),
+                     '（チップを押すと外れます）。同じジャンルのタスクをまとめて入れるときに楽です。')))));
+
+    app(b, h('div', { style:{ 'margin-top':'16px' } },
+      h('div', { class:'kb-sec-t' }, 'クイック追加（打って指定する）'),
       h('div', { class:'callout' }, svg('spark'), h('div', {},
         h('div', {}, h('code', {}, '#社内調整'), ' ジャンルを指定（前方一致でOK）'),
         h('div', {}, h('code', {}, '!明日'), ' ', h('code', {}, '!9/30'), ' ', h('code', {}, '!金'), ' ',
@@ -2331,6 +2420,10 @@ function selectCard(id, scroll) {
 /* ── board clicks ──────────────────────────────────────────── */
 board.addEventListener('click', e => {
   if (suppressClick) { suppressClick = false; return; }   /* ドラッグ直後のクリックは無視 */
+  const qaL = e.target.closest('[data-qa-label]');
+  if (qaL) return openQaLabelPop(qaL, qaL.dataset.qaLabel);
+  const qaD = e.target.closest('[data-qa-due]');
+  if (qaD) return openQaDuePop(qaD, qaD.dataset.qaDue);
   const actBtn = e.target.closest('[data-act]');
   const card = e.target.closest('.card');
   if (actBtn && card) {
@@ -2364,7 +2457,8 @@ board.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !isComposing(e)) {
     e.preventDefault();
     const v = inp.value.trim(); if (!v) return inp.blur();
-    const t = addTask(inp.dataset.qa, v);
+    const d = qaDraft[inp.dataset.qa] || {};
+    const t = addTask(inp.dataset.qa, v, { labelId:d.labelId, due:d.due });
     inp.value = '';
     if (t) { toast('追加しました', { icon:'plus', ms:1400 }); selectCard(t.id, false); }
   } else if (e.key === 'Escape') { inp.value = ''; inp.blur(); }
