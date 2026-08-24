@@ -1160,10 +1160,24 @@ function renderBoard() {
         c.body.append(el);
       });
     }
-    c.body.scrollTop = keepScroll;
+    c.body.scrollTo({ top:keepScroll, behavior:'instant' });   /* smooth だと描き直しのたびに滑って見える */
   });
   seenCardIds = nextSeen;
   renderTabs();
+}
+
+/** クイック追加した直後に呼ぶ。追加したカードは必ず列の先頭に入るので、
+    列を上端まで戻して「どこに入ったか」を必ず目に見えるようにする。
+    （戻さないと、下までスクロールした列では入力欄の文字が消えただけに見える）
+    behavior は指定しない —— `.col-body` の `scroll-behavior` に任せる（reduce 指定時は即時）。 */
+function revealAdded(pid, id) {
+  const c = cols[pid]; if (!c) return;
+  c.body.scrollTo({ top:0 });
+  const el = id && c.body.querySelector(`.card[data-id="${id}"]`);
+  if (!el) return;
+  el.classList.add('is-added');
+  /* is-new の cardIn と2本走るので animationend では外さない（先に終わる方で消えてしまう） */
+  setTimeout(() => el.classList.remove('is-added'), 1200);
 }
 
 function cardEl(t) {
@@ -2495,17 +2509,46 @@ board.addEventListener('click', e => {
   }
 });
 
-/* quick add — IME変換確定の Enter を拾わないよう isComposing を見る */
+/* quick add
+   IME の変換確定 Enter でタスクを作らないためのガードは3重にしている。
+   `e.isComposing` / `keyCode 229` は IME とブラウザの組み合わせで取りこぼすことがあり、
+   取りこぼすと「確定 Enter で追加 → 直後の compositionend で入力欄に文字が戻る」ため、
+   一瞬文字が消えて復活したうえに二重登録される。composition イベントで自前に持つ。 */
+let qaComposing = false, qaComposeEnd = 0;
+board.addEventListener('compositionstart', e => {
+  if (e.target.closest('input[data-qa]')) qaComposing = true;
+});
+board.addEventListener('compositionend', e => {
+  if (e.target.closest('input[data-qa]')) { qaComposing = false; qaComposeEnd = Date.now(); }
+});
+board.addEventListener('focusout', e => {
+  if (e.target.closest('input[data-qa]')) qaComposing = false;
+});
+
 board.addEventListener('keydown', e => {
   const inp = e.target.closest('input[data-qa]');
   if (!inp) return;
-  if (e.key === 'Enter' && !isComposing(e)) {
+  if (e.key === 'Enter') {
+    /* 変換中／変換確定と同じ Enter は捨てる（確定直後に keydown が来る IME があるため） */
+    if (qaComposing || isComposing(e) || Date.now() - qaComposeEnd < 40) return;
     e.preventDefault();
     const v = inp.value.trim(); if (!v) return inp.blur();
-    const d = qaDraft[inp.dataset.qa] || {};
-    const t = addTask(inp.dataset.qa, v, { labelId:d.labelId, due:d.due });
+    const pid = inp.dataset.qa, d = qaDraft[pid] || {};
+    const t = addTask(pid, v, { labelId:d.labelId, due:d.due });
     inp.value = '';
-    if (t) { toast('追加しました', { icon:'plus', ms:1400 }); selectCard(t.id, false); }
+    if (!t) return;
+    selectCard(t.id, false);
+    revealAdded(pid, t.id);
+    if (matchFilter(t)) {
+      toast('追加しました', { icon:'plus', ms:1400 });
+    } else {
+      /* 絞り込みに合わないと列に出ないので、消えたように見えないよう必ず伝える */
+      toast('追加しましたが、いまの絞り込みでは表示されません', { type:'info', icon:'filter', ms:6000,
+        action:{ label:'絞り込みを解除', fn:() => {
+          ui.labelFilter = []; ui.overdueOnly = false; ui.q = ''; $('#q').value = '';
+          saveUi(); renderAll(); selectCard(t.id, false); revealAdded(pid, t.id);
+        } } });
+    }
   } else if (e.key === 'Escape') { inp.value = ''; inp.blur(); }
 });
 board.addEventListener('focusin', e => {

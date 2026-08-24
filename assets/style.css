@@ -456,6 +456,15 @@ a{ color:inherit }
 @keyframes cardIn{ from{ opacity:0; transform:translateY(-5px) scale(.985) } to{ opacity:1; transform:none } }
 .card.is-new{ animation:cardIn .26s var(--e-out) backwards }
 
+/* クイック追加した直後のカード。列の先頭に入ったことが一目で分かるように光らせる
+   （入力欄の文字が消えただけに見えるのを防ぐ） */
+@keyframes cardAdded{
+  from{ box-shadow:var(--hair), 0 0 0 1px var(--pc), 0 0 18px -2px var(--pc), var(--sh-2) }
+  to  { box-shadow:var(--hair), 0 0 0 1px transparent, 0 0 18px -2px transparent, var(--sh-2) }
+}
+/* is-new と同じ animation プロパティを使うので、入場アニメも明示的に並べる */
+.card.is-added{ animation:cardIn .26s var(--e-out) backwards, cardAdded 1.1s var(--e-out) }
+
 /* label rail */
 .card::before{
   content:""; position:absolute; left:0; top:8px; bottom:8px; width:3px;
@@ -1359,6 +1368,7 @@ body.dragging .card-side{ opacity:0 }
 
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{ animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important }
+  .col-body{ scroll-behavior:auto }   /* scroll-behavior はアニメ指定では止まらないので個別に切る */
 }
 
 /* print — 週次レビュー用 */
