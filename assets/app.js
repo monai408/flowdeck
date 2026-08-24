@@ -127,6 +127,7 @@ const I = {
   archive: '<path d="M3.6 7.4h16.8M5.4 7.4v11.2A1.4 1.4 0 006.8 20h10.4a1.4 1.4 0 001.4-1.4V7.4M8 7.4V5.4A1.4 1.4 0 019.4 4h5.2A1.4 1.4 0 0116 5.4v2M10 12h4"/>',
   flame:   '<path d="M12 3.4c3 3.4 5.6 5.4 5.6 9.2A5.6 5.6 0 016.4 12.6c0-1.5.6-2.8 1.6-4 .3 1.3 1.1 2 2 2 0-3 1-5.2 2-7.2z"/>',
   filter:  '<path d="M4 6.4h16M7 12h10M10 17.6h4"/>',
+  sort:    '<path d="M4 6.6h9M4 12h6.5M4 17.4h4"/><path d="M17.4 7.6v9.6M14.2 14.2l3.2 3.2 3.2-3.2"/>',
   checklist:'<path d="M4 7.2l1.9 1.9 3.1-3.4M4 16.2l1.9 1.9 3.1-3.4M12.6 7.4h7.4M12.6 16.6h7.4"/>',
   cycle:   '<path d="M4.6 10.2A7.6 7.6 0 0118 7.1"/><path d="M19.4 13.8A7.6 7.6 0 016 16.9"/><path d="M4.2 6.2v4.2h4.2M19.8 17.8v-4.2h-4.2"/>',
   layers:  '<path d="M12 3.6l8.4 4.3-8.4 4.3L3.6 7.9z"/><path d="M3.6 12.3l8.4 4.3 8.4-4.3"/><path d="M3.6 16.3l8.4 4.1 8.4-4.1"/>',
@@ -407,6 +408,45 @@ function moveBefore(id, phase, beforeId) {
   t.updatedAt = now;
   touch();
 }
+/** 列をジャンル順に並べ替える。ジャンルの並び（ジャンル管理の順）に従い、
+    同じジャンルの中は「重要 → 期限が近い → 元の順」。ジャンルなしは最後。 */
+function sortByLabel(pid) {
+  const list = activeOf(pid);
+  if (list.length < 2) {
+    toast('並べ替えるタスクがありません', { type:'info', icon:'note', ms:1600 });
+    return;
+  }
+  const before = list.map(t => ({ id:t.id, order:t.order }));
+  const rank = {};
+  labelsSorted().forEach((l, i) => { rank[l.id] = i; });
+  const keyOf = t => { const l = labelOf(t); return l ? rank[l.id] : 9999; };
+
+  const sorted = list.slice().sort((a, b) => {
+    const d = keyOf(a) - keyOf(b);
+    if (d) return d;
+    if (!!b.p1 !== !!a.p1) return b.p1 ? 1 : -1;          /* 重要を先に */
+    const da = a.due ? dayDiff(today(), a.due) : 99999;
+    const db = b.due ? dayDiff(today(), b.due) : 99999;
+    if (da !== db) return da - db;                        /* 期限が近い順 */
+    return a.order - b.order;                             /* それ以外は元の順 */
+  });
+
+  /* 既にこの順なら何もしない（押しても無反応に見えないよう伝える） */
+  if (sorted.every((t, i) => t.id === list[i].id)) {
+    toast('すでにジャンル順です', { type:'info', icon:'sort', ms:1600 });
+    return;
+  }
+  const now = Date.now();
+  sorted.forEach((t, i) => { if (t.order !== i) { t.order = i; t.updatedAt = now; } });
+  touch();
+  toast(`${PHASE[pid].label} をジャンル順に並べ替えました`, { icon:'sort',
+    action:{ label:'元に戻す', fn:() => {
+      const n2 = Date.now();
+      before.forEach(s => { const t = state.tasks[s.id]; if (t) { t.order = s.order; t.updatedAt = n2; } });
+      touch(); toast('戻しました', { icon:'undo' });
+    } } });
+}
+
 function nudge(id, dir) {
   const t = state.tasks[id]; if (!t) return;
   const list = activeOf(t.phase);
@@ -991,7 +1031,9 @@ function buildBoard() {
           h('span', { class:'col-dot' }),
           h('span', { class:'col-name' }, p.label),
           h('span', { class:'col-jp' }, p.jp),
-          over, count
+          over, count,
+          h('button', { class:'col-sort', type:'button', dataset:{ sort:pid },
+                        title:'ジャンルごとに並べ替え', 'aria-label':'ジャンルごとに並べ替え' }, svg('sort'))
         ),
         h('div', { class:'qa' },
           h('button', { class:'qa-plus-btn', type:'button', tabindex:'-1',
@@ -2235,6 +2277,7 @@ function openHelp() {
         ['click',  'カード左の丸 → 1クリックで完了'],
         ['click',  'カード本体 → 詳細を開く'],
         ['drag',   'ドラッグでフェーズ移動・並び替え'],
+        ['click',  '列見出しの並べ替えボタン → ジャンル順に整列'],
         ['Ctrl K', 'コマンドパレット（何でもここから）'],
         ['N',      '選択中の列に新規追加'],
         ['/',      '検索'],
@@ -2422,6 +2465,8 @@ board.addEventListener('click', e => {
   if (suppressClick) { suppressClick = false; return; }   /* ドラッグ直後のクリックは無視 */
   const qaL = e.target.closest('[data-qa-label]');
   if (qaL) return openQaLabelPop(qaL, qaL.dataset.qaLabel);
+  const sortBtn = e.target.closest('[data-sort]');
+  if (sortBtn) return sortByLabel(sortBtn.dataset.sort);
   const qaD = e.target.closest('[data-qa-due]');
   if (qaD) return openQaDuePop(qaD, qaD.dataset.qaDue);
   const actBtn = e.target.closest('[data-act]');
