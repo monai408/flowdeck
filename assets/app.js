@@ -288,7 +288,15 @@ function normRepeat(r) {
     out.wdays = w.length ? Array.from(new Set(w)).sort() : [new Date().getDay()];
   }
   if (kind === 'monthly') {
-    out.monthDay = r.monthDay === 'last' ? 'last' : Math.min(31, Math.max(1, parseInt(r.monthDay, 10) || 1));
+    out.monthMode = r.monthMode === 'weekday' ? 'weekday' : 'date';
+    if (out.monthMode === 'weekday') {
+      const rule = r.monthRule || {};
+      const nth = rule.nth === 'last' ? 'last' : Math.min(4, Math.max(1, parseInt(rule.nth, 10) || 1));
+      const wday = Math.min(6, Math.max(0, parseInt(rule.wday, 10) || 0));
+      out.monthRule = { nth, wday };
+    } else {
+      out.monthDay = r.monthDay === 'last' ? 'last' : Math.min(31, Math.max(1, parseInt(r.monthDay, 10) || 1));
+    }
   }
   return out;
 }
@@ -572,9 +580,25 @@ function repeatLabel(r) {
   if (r.kind === 'daily')    return iv ? `${iv}日ごと` : '毎日';
   if (r.kind === 'weekdays') return '平日（月〜金）';
   if (r.kind === 'weekly')   return (iv ? `${iv}週ごと ` : '毎週') + (r.wdays || []).map(w => WDAY[w]).join('・');
-  if (r.kind === 'monthly')  return (iv ? `${iv}か月ごと ` : '毎月') +
-                                    (r.monthDay === 'last' ? '月末' : `${r.monthDay}日`);
+  if (r.kind === 'monthly') {
+    const prefix = iv ? `${iv}か月ごと ` : '毎月';
+    if (r.monthMode === 'weekday' && r.monthRule) {
+      return prefix + (r.monthRule.nth === 'last' ? '最終' : `第${r.monthRule.nth}`) + WDAY[r.monthRule.wday] + '曜';
+    }
+    return prefix + (r.monthDay === 'last' ? '月末' : `${r.monthDay}日`);
+  }
   return 'なし';
+}
+/** 指定した年月の「第n◯曜日」を求める。nth='last' なら月内最後のその曜日 */
+function nthWeekdayOfMonth(y, m, wday, nth) {
+  if (nth === 'last') {
+    const lastDate = new Date(y, m + 1, 0);
+    const diff = (lastDate.getDay() - wday + 7) % 7;
+    return new Date(y, m, lastDate.getDate() - diff);
+  }
+  const first = new Date(y, m, 1);
+  const offset = (wday - first.getDay() + 7) % 7;
+  return new Date(y, m, 1 + offset + (nth - 1) * 7);
 }
 /** 次回の期限。base='due' なら前回の期限起点、'done' なら今日起点 */
 function nextRepeatDate(t) {
@@ -598,6 +622,9 @@ function nextRepeatDate(t) {
   if (r.kind === 'monthly') {
     const d = parseYmd(from) || new Date();
     const y = d.getFullYear(), m = d.getMonth() + iv;
+    if (r.monthMode === 'weekday' && r.monthRule) {
+      return ymd(nthWeekdayOfMonth(y, m, r.monthRule.wday, r.monthRule.nth));
+    }
     const last = new Date(y, m + 1, 0).getDate();
     const day = r.monthDay === 'last' ? last : Math.min(r.monthDay || d.getDate(), last);
     return ymd(new Date(y, m, day));
@@ -1553,7 +1580,13 @@ function openDrawer(id) {
   const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.max(44, ta.scrollHeight) + 'px'; };
   ta.addEventListener('input', () => { fit(); debouncePatch(id, { title:ta.value }); });
   ta.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing(e)) { e.preventDefault(); ta.blur(); }
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing(e)) {
+      e.preventDefault();
+      e.stopPropagation();   /* 閉じると activeElement が外れ、ボードのEnterショートカットが誤発火するため */
+      clearTimeout(debTimers[id + 'title']);
+      patch(id, { title:ta.value });
+      closeDrawer();
+    }
   });
   app(body, h('div', { class:'field' }, ta));
   setTimeout(fit, 0);
@@ -1588,6 +1621,12 @@ function openDrawer(id) {
   /* due */
   const dueInp = h('input', { class:'inp', type:'date', value:t.due || '', style:{ 'max-width':'190px' } });
   dueInp.addEventListener('change', () => { patch(id, { due:dueInp.value || null }); openDrawer(id); });
+  dueInp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault(); e.stopPropagation();
+      patch(id, { due:dueInp.value || null }); closeDrawer();
+    }
+  });
   const di = dueInfo(t.due);
   app(body, h('div', { class:'field' },
     h('div', { class:'label' }, svg('hourglass','ico'), '期限',
@@ -1614,8 +1653,22 @@ function openDrawer(id) {
         '自分で確認', h('small', {}, '最終チェック待ち')));
     const who = h('input', { class:'inp', type:'text', placeholder:'例：山田さん／A社／情シス', value:t.waitingFor || '' });
     who.addEventListener('input', () => debouncePatch(id, { waitingFor:who.value }, { render:false }));
+    who.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !isComposing(e)) {
+        e.preventDefault(); e.stopPropagation();
+        clearTimeout(debTimers[id + 'waitingFor']);
+        patch(id, { waitingFor:who.value });
+        closeDrawer();
+      }
+    });
     const since = h('input', { class:'inp', type:'date', value:t.waitingSince || '', style:{ 'max-width':'190px' } });
     since.addEventListener('change', () => { patch(id, { waitingSince:since.value || null }); openDrawer(id); });
+    since.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault(); e.stopPropagation();
+        patch(id, { waitingSince:since.value || null }); closeDrawer();
+      }
+    });
     const elapsed = t.waitingSince && dayDiff(t.waitingSince, today());
     app(body, h('div', { class:'field' },
       h('div', { class:'label' }, svg('eye','ico'), '確認の種類'), kseg,
@@ -1712,15 +1765,55 @@ function openDrawer(id) {
       rows.push(wrow);
     }
     if (rp.kind === 'monthly') {
-      const dsel = h('select', { class:'inp inp-sel', style:{ 'max-width':'120px' } });
-      for (let d = 1; d <= 31; d++)
-        dsel.append(h('option', { value:String(d), selected:String(rp.monthDay) === String(d) }, `${d}日`));
-      dsel.append(h('option', { value:'last', selected:rp.monthDay === 'last' }, '月末'));
-      dsel.addEventListener('change', () => {
-        patch(id, { repeat:normRepeat(Object.assign({}, rp, { monthDay:dsel.value })) });
-        openDrawer(id);
-      });
-      rows.push(h('div', { class:'row', style:{ 'margin-top':'9px' } }, dsel));
+      const mode = rp.monthMode === 'weekday' ? 'weekday' : 'date';
+      const mref = parseYmd(t.due) || new Date();
+      rows.push(h('div', { class:'seg seg-2', style:{ 'margin-top':'9px' } },
+        h('button', { class:'seg-btn' + (mode === 'date' ? ' is-on' : ''), type:'button',
+          style:{ '--pc':`var(--${t.phase})` },
+          onClick:() => {
+            if (mode === 'date') return;
+            patch(id, { repeat:normRepeat(Object.assign({}, rp, { monthMode:'date', monthDay:mref.getDate() })) });
+            openDrawer(id);
+          } }, '日付で指定', h('small', {}, '例：15日・月末')),
+        h('button', { class:'seg-btn' + (mode === 'weekday' ? ' is-on' : ''), type:'button',
+          style:{ '--pc':`var(--${t.phase})` },
+          onClick:() => {
+            if (mode === 'weekday') return;
+            patch(id, { repeat:normRepeat(Object.assign({}, rp, { monthMode:'weekday',
+              monthRule:{ nth:1, wday:mref.getDay() } })) });
+            openDrawer(id);
+          } }, '曜日で指定', h('small', {}, '例：第1月曜'))));
+
+      if (mode === 'date') {
+        const dsel = h('select', { class:'inp inp-sel', style:{ 'max-width':'120px' } });
+        for (let d = 1; d <= 31; d++)
+          dsel.append(h('option', { value:String(d), selected:String(rp.monthDay) === String(d) }, `${d}日`));
+        dsel.append(h('option', { value:'last', selected:rp.monthDay === 'last' }, '月末'));
+        dsel.addEventListener('change', () => {
+          patch(id, { repeat:normRepeat(Object.assign({}, rp, { monthDay:dsel.value })) });
+          openDrawer(id);
+        });
+        rows.push(h('div', { class:'row', style:{ 'margin-top':'8px' } }, dsel));
+      } else {
+        const rule = rp.monthRule || { nth:1, wday:mref.getDay() };
+        const nthSel = h('select', { class:'inp inp-sel', style:{ 'max-width':'92px' } });
+        [[1, '第1'], [2, '第2'], [3, '第3'], [4, '第4'], ['last', '最終']].forEach(([v, l]) =>
+          nthSel.append(h('option', { value:String(v), selected:String(rule.nth) === String(v) }, l)));
+        const wdaySel = h('select', { class:'inp inp-sel', style:{ 'max-width':'104px' } });
+        WDAY.forEach((w, i) => wdaySel.append(h('option',
+          { value:String(i), selected:rule.wday === i }, `${w}曜日`)));
+        const commit = () => {
+          patch(id, { repeat:normRepeat(Object.assign({}, rp, {
+            monthMode:'weekday',
+            monthRule:{ nth:nthSel.value === 'last' ? 'last' : +nthSel.value, wday:+wdaySel.value }
+          })) });
+          openDrawer(id);
+        };
+        nthSel.addEventListener('change', commit);
+        wdaySel.addEventListener('change', commit);
+        rows.push(h('div', { class:'row', style:{ 'margin-top':'8px' } }, nthSel, wdaySel));
+        rows.push(h('div', { class:'hint' }, '土日を避けて平日だけに固定したいときは、ここで曜日を選んでください。'));
+      }
     }
     rows.push(h('div', { class:'seg seg-2', style:{ 'margin-top':'9px' } },
       h('button', { class:'seg-btn' + (rp.base === 'due' ? ' is-on' : ''), type:'button',
@@ -2348,11 +2441,13 @@ function openHelp() {
         h('div', {}, h('b', {}, '手順'),
           '　詳細パネルでチェックリストを作れます。カードには ', h('code', {}, '2/5'), ' と進捗バーが出ます。'),
         h('div', {}, h('b', {}, '繰り返し'),
-          '　毎日／平日／毎週／毎月を設定すると、完了した瞬間に次回分が1枚生まれます。次回日は「期限から」か「完了日から」を選べます。'),
+          '　毎日／平日／毎週／毎月を設定すると、完了した瞬間に次回分が1枚生まれます。次回日は「期限から」か「完了日から」を選べます。毎月は「15日」のような日付指定のほか、「第1月曜」のような曜日指定も選べます（土日にずれる心配がありません）。'),
         h('div', {}, h('b', {}, 'テンプレート'),
           '　複数選択して重ねアイコンを押すと保存。期限は「投入日からの日数」で覚えるので、いつ投入しても日付がずれません。'),
         h('div', {}, h('b', {}, '通知'),
-          '　設定から有効にすると、1日1回だけ期限切れ・当日・長く待っている件数をまとめて知らせます（ブラウザが起動している間のみ）。')))));
+          '　設定から有効にすると、1日1回だけ期限切れ・当日・長く待っている件数をまとめて知らせます（ブラウザが起動している間のみ）。'),
+        h('div', {}, h('b', {}, '詳細パネルを閉じる'),
+          '　タイトルや期限などを編集して Enter を押すと、✕ と同じように保存して閉じます（改行が必要なメモと、続けて追加する手順の入力欄は対象外）。')))));
 
     app(b, h('div', { style:{ 'margin-top':'16px' } },
       h('div', { class:'kb-sec-t' }, '4つのフェーズの使い分け'),
